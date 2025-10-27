@@ -1,0 +1,8 @@
+
+_pychache__/
+ass
+
+# Virtual environments
+venv/
+.env/
+pychache__/
