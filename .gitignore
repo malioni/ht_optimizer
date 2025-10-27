@@ -1,8 +1,4 @@
-
-_pychache__/
-ass
-
 # Virtual environments
 venv/
 .env/
-pychache__/
+__pychache__/
