@@ -112,3 +112,26 @@ def order_total(skills: dict[str, float], form_mult: float,
             form=form_mult,
         )
     return total
+
+
+def rank_players(players: list[dict], position: str,
+                 weights: dict[str, float]) -> list[dict]:
+    """Return players sorted best-first for the position.
+
+    Comparison is lexicographic on each player's descending per-order totals:
+    highest total first, ties broken by the second-highest, and so on.
+    """
+    orders = POSITION_ORDERS[position]
+    ranked = []
+    for player in players:
+        form_mult = form_multiplier(player["form"])
+        totals = {
+            label: order_total(player["skills"], form_mult, code, weights)
+            for label, code in orders.items()
+        }
+        entry = dict(player)
+        entry["totals"] = totals
+        entry["best_order"] = max(totals, key=totals.get)
+        ranked.append(entry)
+    ranked.sort(key=lambda e: sorted(e["totals"].values(), reverse=True), reverse=True)
+    return ranked

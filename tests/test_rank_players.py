@@ -149,5 +149,36 @@ class TestOrderTotal(unittest.TestCase):
         self.assertAlmostEqual(total, expected)
 
 
+class TestRankPlayers(unittest.TestCase):
+    def test_orders_by_best_total(self):
+        players = [
+            {"name": "Weak", "age": "20.1", "form": 7.0, "skills": base_skills(Defending=5.0)},
+            {"name": "Strong", "age": "20.1", "form": 7.0, "skills": base_skills(Defending=10.0)},
+        ]
+        ranked = rank_players.rank_players(players, "central defender", ALL_ONE_WEIGHTS)
+        self.assertEqual([p["name"] for p in ranked], ["Strong", "Weak"])
+        self.assertEqual(set(ranked[0]["totals"]), {"normal", "towards wing", "offensive"})
+        top = ranked[0]
+        self.assertEqual(top["best_order"], max(top["totals"], key=top["totals"].get))
+
+    def test_tie_on_best_broken_by_second_best(self):
+        # Stub order_total to force an exact tie on the best total so the
+        # second-highest total must decide the order.
+        fake_totals = {
+            "PlainCD": {"RCD": 10.0, "RCDTW": 5.0, "ROCD": 3.0},
+            "WingCD": {"RCD": 10.0, "RCDTW": 7.0, "ROCD": 3.0},
+        }
+        original = rank_players.order_total
+        rank_players.order_total = lambda skills, fm, code, w: fake_totals[skills["who"]][code]
+        self.addCleanup(setattr, rank_players, "order_total", original)
+        players = [
+            {"name": "PlainCD", "age": "20.1", "form": 7.0, "skills": {"who": "PlainCD"}},
+            {"name": "WingCD", "age": "20.1", "form": 7.0, "skills": {"who": "WingCD"}},
+        ]
+        ranked = rank_players.rank_players(players, "central defender", ALL_ONE_WEIGHTS)
+        self.assertEqual([p["name"] for p in ranked], ["WingCD", "PlainCD"])
+        self.assertEqual(ranked[0]["totals"]["normal"], ranked[1]["totals"]["normal"])
+
+
 if __name__ == "__main__":
     unittest.main()
