@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 import rank_players
+import ratings
 
 
 class TestFormMultiplier(unittest.TestCase):
@@ -101,6 +102,51 @@ class TestParsePlayers(unittest.TestCase):
         self.assertEqual(players[0]["name"], "Good Row")
         self.assertEqual(len(warnings), 1)
         self.assertIn("Bad", warnings[0])
+
+
+ALL_ONE_WEIGHTS = {s: 1.0 for s in ["LB", "MB", "RB", "M", "LF", "MF", "RF"]}
+
+
+def base_skills(**overrides):
+    skills = {s: 1.0 for s in ["Goalkeeping", "Defending", "Playmaking",
+                               "Passing", "Winger", "Scoring", "Set Pieces"]}
+    skills.update(overrides)
+    return skills
+
+
+class TestOrderTotal(unittest.TestCase):
+    def test_all_skills_at_one_gives_zero(self):
+        total = rank_players.order_total(base_skills(), 1.0, "RWB", ALL_ONE_WEIGHTS)
+        self.assertEqual(total, 0.0)
+
+    def test_single_skill_matches_ratings_module(self):
+        skills = base_skills(Defending=5.0)
+        # RCD gets Defending contributions in MB and RB (Playmaking/M is zero at skill 1)
+        expected = (
+            ratings.calculate_sector_rating_contribution(5.0, "Defending", "MB", "RCD", 1.0)
+            + ratings.calculate_sector_rating_contribution(5.0, "Defending", "RB", "RCD", 1.0)
+        )
+        total = rank_players.order_total(skills, 1.0, "RCD", ALL_ONE_WEIGHTS)
+        self.assertAlmostEqual(total, expected)
+
+    def test_sector_weights_scale_sectors(self):
+        skills = base_skills(Defending=5.0)
+        weights = dict(ALL_ONE_WEIGHTS, MB=2.0)
+        expected = (
+            2.0 * ratings.calculate_sector_rating_contribution(5.0, "Defending", "MB", "RCD", 1.0)
+            + ratings.calculate_sector_rating_contribution(5.0, "Defending", "RB", "RCD", 1.0)
+        )
+        total = rank_players.order_total(skills, 1.0, "RCD", weights)
+        self.assertAlmostEqual(total, expected)
+
+    def test_form_is_passed_through(self):
+        skills = base_skills(Defending=5.0)
+        expected = (
+            ratings.calculate_sector_rating_contribution(5.0, "Defending", "MB", "RCD", 0.925)
+            + ratings.calculate_sector_rating_contribution(5.0, "Defending", "RB", "RCD", 0.925)
+        )
+        total = rank_players.order_total(skills, 0.925, "RCD", ALL_ONE_WEIGHTS)
+        self.assertAlmostEqual(total, expected)
 
 
 if __name__ == "__main__":

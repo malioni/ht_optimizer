@@ -2,6 +2,9 @@
 
 import csv
 
+import contributions
+import ratings
+
 FORM_TABLE = [
     (1.5, 0.282), (2.0, 0.379), (2.5, 0.462), (3.0, 0.534),
     (3.5, 0.598), (4.0, 0.655), (4.5, 0.707), (5.0, 0.755),
@@ -92,3 +95,20 @@ def parse_players(csv_path: str) -> tuple[list[dict], list[str]]:
                 "skills": skills,
             })
     return players, warnings
+
+
+def order_total(skills: dict[str, float], form_mult: float,
+                order_code: str, weights: dict[str, float]) -> float:
+    """Weighted sum of a player's sector rating contributions for one order."""
+    total = 0.0
+    for (position, skill, sector) in contributions.contributions:
+        if position != order_code:
+            continue
+        total += weights[sector] * ratings.calculate_sector_rating_contribution(
+            skill_level=skills[skill],
+            skill_type=skill,
+            sector=sector,
+            position=order_code,
+            form=form_mult,
+        )
+    return total
