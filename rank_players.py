@@ -1,5 +1,7 @@
 """Rank players from a CSV export by rating contribution for a position."""
 
+import csv
+
 FORM_TABLE = [
     (1.5, 0.282), (2.0, 0.379), (2.5, 0.462), (3.0, 0.534),
     (3.5, 0.598), (4.0, 0.655), (4.5, 0.707), (5.0, 0.755),
@@ -54,3 +56,39 @@ def parse_weights(spec: str | None) -> dict[str, float]:
                 raise ValueError(f"unknown sector {sector!r}; valid sectors: {', '.join(SECTORS)}")
             weights[sector] = float(value)
     return weights
+
+
+SKILL_COLUMNS = {
+    "KeeperSkill": "Goalkeeping",
+    "DefenderSkill": "Defending",
+    "PlaymakerSkill": "Playmaking",
+    "PassingSkill": "Passing",
+    "WingerSkill": "Winger",
+    "ScorerSkill": "Scoring",
+    "SetPiecesSkill": "Set Pieces",
+}
+
+
+def parse_players(csv_path: str) -> tuple[list[dict], list[str]]:
+    """Read the player export; returns (players, warnings for skipped rows)."""
+    players = []
+    warnings = []
+    with open(csv_path, encoding="utf-8") as f:
+        for row in csv.DictReader(f, delimiter=";"):
+            name = " ".join(
+                part for part in (row.get("FirstName"), row.get("NickName"), row.get("LastName"))
+                if part
+            )
+            try:
+                skills = {skill: float(row[column]) for column, skill in SKILL_COLUMNS.items()}
+                form = float(row["PlayerForm"])
+            except (KeyError, TypeError, ValueError) as exc:
+                warnings.append(f"skipping {name or '<unnamed row>'}: bad or missing value ({exc})")
+                continue
+            players.append({
+                "name": name,
+                "age": f"{row.get('Age', '?')}.{row.get('AgeDays', '?')}",
+                "form": form,
+                "skills": skills,
+            })
+    return players, warnings

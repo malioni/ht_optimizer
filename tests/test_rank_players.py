@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 
 import rank_players
@@ -45,6 +47,60 @@ class TestParseWeights(unittest.TestCase):
     def test_unknown_sector_raises(self):
         with self.assertRaises(ValueError):
             rank_players.parse_weights("XX=2")
+
+
+CSV_HEADER = (
+    "PlayerID;FirstName;NickName;LastName;Age;AgeDays;PlayerForm;StaminaSkill;"
+    "KeeperSkill;PlaymakerSkill;ScorerSkill;PassingSkill;WingerSkill;"
+    "DefenderSkill;SetPiecesSkill;"
+)
+
+
+def write_csv(rows: list[str]) -> str:
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(CSV_HEADER + "\n")
+        for row in rows:
+            f.write(row + "\n")
+    return path
+
+
+class TestParsePlayers(unittest.TestCase):
+    def test_parses_player_row(self):
+        path = write_csv([
+            "1;Danila;The Bull;Bykovskiy;21;72;7;8;1.0000;10.0200;2.0000;3.0000;8.0000;13.3299;3.0000;",
+        ])
+        self.addCleanup(os.remove, path)
+        players, warnings = rank_players.parse_players(path)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(players), 1)
+        player = players[0]
+        self.assertEqual(player["name"], "Danila The Bull Bykovskiy")
+        self.assertEqual(player["age"], "21.72")
+        self.assertEqual(player["form"], 7.0)
+        self.assertAlmostEqual(player["skills"]["Playmaking"], 10.02)
+        self.assertAlmostEqual(player["skills"]["Defending"], 13.3299)
+        self.assertAlmostEqual(player["skills"]["Set Pieces"], 3.0)
+
+    def test_empty_nickname_omitted_from_name(self):
+        path = write_csv([
+            "2;Ako;;Jansons;21;77;6;8;1.0;3.0;4.0;4.0;5.0;15.3045;2.0;",
+        ])
+        self.addCleanup(os.remove, path)
+        players, _ = rank_players.parse_players(path)
+        self.assertEqual(players[0]["name"], "Ako Jansons")
+
+    def test_malformed_row_skipped_with_warning(self):
+        path = write_csv([
+            "3;Bad;;Row;21;10;7;8;1.0;oops;4.0;4.0;5.0;15.0;2.0;",
+            "4;Good;;Row;20;5;7;8;1.0;3.0;4.0;4.0;5.0;15.0;2.0;",
+        ])
+        self.addCleanup(os.remove, path)
+        players, warnings = rank_players.parse_players(path)
+        self.assertEqual(len(players), 1)
+        self.assertEqual(players[0]["name"], "Good Row")
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("Bad", warnings[0])
 
 
 if __name__ == "__main__":
