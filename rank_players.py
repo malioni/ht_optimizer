@@ -18,3 +18,39 @@ def form_multiplier(form: float) -> float:
         if lo_f <= form <= hi_f:
             return lo_m + (hi_m - lo_m) * (form - lo_f) / (hi_f - lo_f)
     raise ValueError(f"unreachable form value: {form}")
+
+
+SECTORS = ["LB", "MB", "RB", "M", "LF", "MF", "RF"]
+
+# Order label -> contribution-table position code (right side; tables are symmetric).
+POSITION_ORDERS = {
+    "goalkeeper": {"normal": "GK"},
+    "wingback": {"normal": "RWB", "defensive": "RWBD",
+                 "towards middle": "RWBM", "offensive": "RWBO"},
+    "central defender": {"normal": "RCD", "towards wing": "RCDTW", "offensive": "ROCD"},
+    "inner midfielder": {"normal": "RIM", "defensive": "RIMD",
+                         "offensive": "RIMO", "towards wing": "RIMTW"},
+    "winger": {"normal": "RW", "defensive": "RWD",
+               "towards middle": "RWTM", "offensive": "RWO"},
+    "forward": {"normal": "RFW", "defensive": "RDF", "towards wing": "RFTW"},
+}
+
+
+def normalize_position(position: str) -> str:
+    normalized = position.strip().lower().replace("_", " ").replace("-", " ")
+    if normalized not in POSITION_ORDERS:
+        valid = ", ".join(POSITION_ORDERS)
+        raise ValueError(f"unknown position {position!r}; valid positions: {valid}")
+    return normalized
+
+
+def parse_weights(spec: str | None) -> dict[str, float]:
+    weights = {sector: 1.0 for sector in SECTORS}
+    if spec:
+        for part in spec.split(","):
+            sector, _, value = part.partition("=")
+            sector = sector.strip().upper()
+            if sector not in weights:
+                raise ValueError(f"unknown sector {sector!r}; valid sectors: {', '.join(SECTORS)}")
+            weights[sector] = float(value)
+    return weights
