@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HT Player Position Ranker</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --text: #1c2733;
+    --muted: #5c6b7a;
+    --border: #d8dee5;
+    --accent: #1a6f4b;
+    --accent-soft: #e3f2eb;
+    --warn: #a05a00;
+    --row-alt: #f2f5f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14181d;
+      --card: #1d232b;
+      --text: #e4e9ee;
+      --muted: #9aa7b4;
+      --border: #333d48;
+      --accent: #4cc38a;
+      --accent-soft: #1e3a2d;
+      --warn: #e0a458;
+      --row-alt: #232a33;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+  .subtitle { color: var(--muted); margin: 0 0 1.5rem; font-size: 0.95rem; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+  label { font-weight: 600; font-size: 0.9rem; display: block; margin-bottom: 0.3rem; }
+  .hint { font-weight: 400; color: var(--muted); }
+  input[type="file"], select, textarea, input[type="number"] {
+    font: inherit;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.4rem 0.55rem;
+  }
+  textarea { width: 100%; min-height: 90px; resize: vertical; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+  .controls { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: flex-end; margin-top: 1rem; }
+  .weights { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.4rem; }
+  .weights div { text-align: center; }
+  .weights label { font-weight: 500; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.15rem; }
+  .weights input { width: 4.2rem; text-align: center; }
+  button {
+    font: inherit;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    padding: 0.55rem 1.4rem;
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+  }
+  button:disabled { opacity: 0.55; cursor: default; }
+  button.secondary { background: var(--accent-soft); color: var(--accent); }
+  #status { color: var(--muted); font-size: 0.9rem; margin-top: 0.75rem; }
+  #status.error { color: #c0392b; }
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td { padding: 0.45rem 0.7rem; text-align: left; white-space: nowrap; }
+  th { border-bottom: 2px solid var(--border); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+  tbody tr:nth-child(even) { background: var(--row-alt); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.best-val { font-weight: 700; color: var(--accent); }
+  .warnings { color: var(--warn); font-size: 0.85rem; margin-top: 0.75rem; }
+  .results-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+  footer { color: var(--muted); font-size: 0.8rem; margin-top: 2rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>HT Player Position Ranker</h1>
+  <p class="subtitle">Upload a player CSV export, pick a position, and rank players by their rating
+  contribution for each individual order. All computation runs in your browser.</p>
+
+  <div class="card">
+    <label for="file">Player CSV export <span class="hint">(semicolon-separated)</span></label>
+    <input type="file" id="file" accept=".csv,text/csv">
+    <p style="margin:0.75rem 0 0.3rem"><label for="pasted">&hellip;or paste the CSV contents</label></p>
+    <textarea id="pasted" placeholder="PlayerID;FirstName;NickName;LastName;..."></textarea>
+
+    <div class="controls">
+      <div>
+        <label for="position">Position</label>
+        <select id="position">
+          <option value="wingback">Wingback</option>
+          <option value="goalkeeper">Goalkeeper</option>
+          <option value="central defender">Central defender</option>
+          <option value="inner midfielder">Inner midfielder</option>
+          <option value="winger">Winger</option>
+          <option value="forward">Forward</option>
+        </select>
+      </div>
+      <div>
+        <label>Sector weights <span class="hint">(multiply each sector's contribution)</span></label>
+        <div class="weights" id="weights"></div>
+      </div>
+      <button id="run" disabled>Rank players</button>
+    </div>
+    <div id="status">Loading Python runtime&hellip; first visit downloads ~10&nbsp;MB, later visits are cached.</div>
+  </div>
+
+  <div class="card" id="results-card" hidden>
+    <div class="results-head">
+      <strong id="results-title"></strong>
+      <button class="secondary" id="download">Download CSV</button>
+    </div>
+    <div class="table-scroll"><table id="results"></table></div>
+    <div class="warnings" id="warnings"></div>
+  </div>
+
+  <footer>Formulas and contribution tables come straight from
+  <a href="https://github.com/malioni/ht_optimizer">malioni/ht_optimizer</a> &mdash; the page runs the
+  same <code>rank_players.py</code> used on the command line, via Pyodide.</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script>
+const SECTORS = ["LB", "MB", "RB", "M", "LF", "MF", "RF"];
+const PY_FILES = ["contributions.py", "ratings.py", "rank_players.py"];
+
+const el = (id) => document.getElementById(id);
+let pyRun = null;
+let lastResult = null;
+
+// Visible, editable sector weights (default 1.0 each)
+for (const s of SECTORS) {
+  const box = document.createElement("div");
+  const lab = document.createElement("label");
+  lab.textContent = s;
+  lab.htmlFor = "w-" + s;
+  const inp = document.createElement("input");
+  inp.type = "number";
+  inp.step = "0.1";
+  inp.min = "0";
+  inp.value = "1";
+  inp.id = "w-" + s;
+  box.append(lab, inp);
+  el("weights").append(box);
+}
+
+const GLUE = `
+import json
+import rank_players
+
+def run_ranking(csv_text, position, weights_json):
+    with open("upload.csv", "w", encoding="utf-8") as f:
+        f.write(csv_text)
+    weights = {k: float(v) for k, v in json.loads(weights_json).items()}
+    position = rank_players.normalize_position(position)
+    players, warnings = rank_players.parse_players("upload.csv")
+    ranked = rank_players.rank_players(players, position, weights)
+    labels = list(rank_players.POSITION_ORDERS[position])
+    rows = [
+        {
+            "rank": i,
+            "name": e["name"],
+            "age": e["age"],
+            "form": e["form"],
+            "exp": e["experience"],
+            "totals": {label: e["totals"][label] for label in labels},
+            "best": e["best_order"],
+        }
+        for i, e in enumerate(ranked, start=1)
+    ]
+    return json.dumps({"labels": labels, "rows": rows, "warnings": warnings})
+`;
+
+async function init() {
+  try {
+    const pyodide = await loadPyodide();
+    for (const name of PY_FILES) {
+      const resp = await fetch(name, { cache: "no-cache" });
+      if (!resp.ok) throw new Error("failed to fetch " + name);
+      pyodide.FS.writeFile(name, await resp.text());
+    }
+    pyodide.runPython(GLUE);
+    pyRun = pyodide.globals.get("run_ranking");
+    el("status").textContent = "Ready.";
+    el("run").disabled = false;
+  } catch (err) {
+    el("status").textContent = "Failed to load: " + err;
+    el("status").className = "error";
+  }
+}
+
+async function getCsvText() {
+  const file = el("file").files[0];
+  if (file) return await file.text();
+  return el("pasted").value.trim();
+}
+
+el("run").addEventListener("click", async () => {
+  const csvText = await getCsvText();
+  if (!csvText) {
+    el("status").textContent = "Choose a CSV file or paste its contents first.";
+    el("status").className = "error";
+    return;
+  }
+  const weights = {};
+  for (const s of SECTORS) weights[s] = parseFloat(el("w-" + s).value) || 0;
+  try {
+    const result = JSON.parse(pyRun(csvText, el("position").value, JSON.stringify(weights)));
+    lastResult = result;
+    render(result);
+    el("status").textContent = "Ready.";
+    el("status").className = "";
+  } catch (err) {
+    el("status").textContent = "Error: " + err;
+    el("status").className = "error";
+  }
+});
+
+function render(result) {
+  const position = el("position").selectedOptions[0].textContent;
+  el("results-title").textContent =
+    position + " — " + result.rows.length + " players ranked";
+  const head = ["Rank", "Player", "Age", "Form", "Exp",
+                ...result.labels, "Best"];
+  const thead = "<thead><tr>" + head.map(h => "<th>" + h + "</th>").join("") + "</tr></thead>";
+  const body = result.rows.map(row => {
+    const cells = [
+      "<td class='num'>" + row.rank + "</td>",
+      "<td>" + escapeHtml(row.name) + "</td>",
+      "<td class='num'>" + row.age + "</td>",
+      "<td class='num'>" + row.form + "</td>",
+      "<td class='num'>" + row.exp + "</td>",
+      ...result.labels.map(label => {
+        const cls = label === row.best ? "num best-val" : "num";
+        return "<td class='" + cls + "'>" + row.totals[label].toFixed(3) + "</td>";
+      }),
+      "<td>" + escapeHtml(row.best) + "</td>",
+    ];
+    return "<tr>" + cells.join("") + "</tr>";
+  }).join("");
+  el("results").innerHTML = thead + "<tbody>" + body + "</tbody>";
+  el("warnings").textContent = result.warnings.length
+    ? "Skipped rows: " + result.warnings.join("; ")
+    : "";
+  el("results-card").hidden = false;
+}
+
+el("download").addEventListener("click", () => {
+  if (!lastResult) return;
+  const head = ["Rank", "Player", "Age", "Form", "Exp", ...lastResult.labels, "Best"];
+  const lines = [head.join(",")];
+  for (const row of lastResult.rows) {
+    lines.push([
+      row.rank, csvField(row.name), row.age, row.form, row.exp,
+      ...lastResult.labels.map(label => row.totals[label].toFixed(4)),
+      csvField(row.best),
+    ].join(","));
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "ranked_players.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+function csvField(value) {
+  return /[",\n]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>
