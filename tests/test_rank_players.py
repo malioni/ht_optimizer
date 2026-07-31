@@ -129,7 +129,7 @@ class TestOrderTotal(unittest.TestCase):
         expected = (
             ratings.calculate_sector_rating_contribution(5.0, "Defending", "MB", "RCD", 1.0)
             + ratings.calculate_sector_rating_contribution(5.0, "Defending", "RB", "RCD", 1.0)
-        )
+        ) / 4.0
         total = rank_players.order_total(skills, 1.0, "RCD", ALL_ONE_WEIGHTS)
         self.assertAlmostEqual(total, expected)
 
@@ -139,7 +139,7 @@ class TestOrderTotal(unittest.TestCase):
         expected = (
             2.0 * ratings.calculate_sector_rating_contribution(5.0, "Defending", "MB", "RCD", 1.0)
             + ratings.calculate_sector_rating_contribution(5.0, "Defending", "RB", "RCD", 1.0)
-        )
+        ) / 4.0
         total = rank_players.order_total(skills, 1.0, "RCD", weights)
         self.assertAlmostEqual(total, expected)
 
@@ -148,7 +148,7 @@ class TestOrderTotal(unittest.TestCase):
         expected = (
             ratings.calculate_sector_rating_contribution(5.0, "Defending", "MB", "RCD", 0.925)
             + ratings.calculate_sector_rating_contribution(5.0, "Defending", "RB", "RCD", 0.925)
-        )
+        ) / 4.0
         total = rank_players.order_total(skills, 0.925, "RCD", ALL_ONE_WEIGHTS)
         self.assertAlmostEqual(total, expected)
 
@@ -210,7 +210,7 @@ class TestExperienceEffect(unittest.TestCase):
             (rank_players.experience_effect(5.0, sector)
              * ratings.get_sector_factor(sector)) ** 1.2
             for sector in ["MB", "RB", "M"]
-        )
+        ) / 4.0
         total = rank_players.order_total(base_skills(), 1.0, "RCD", ALL_ONE_WEIGHTS, exp=5.0)
         self.assertAlmostEqual(total, expected)
 
@@ -219,7 +219,7 @@ class TestExperienceEffect(unittest.TestCase):
         rcd = rank_players.order_total(base_skills(), 1.0, "RCD", ALL_ONE_WEIGHTS, exp=5.0)
         rcdtw = rank_players.order_total(base_skills(), 1.0, "RCDTW", ALL_ONE_WEIGHTS, exp=5.0)
         rf_term = (rank_players.experience_effect(5.0, "RF")
-                   * ratings.get_sector_factor("RF")) ** 1.2
+                   * ratings.get_sector_factor("RF")) ** 1.2 / 4.0
         self.assertAlmostEqual(rcdtw - rcd, rf_term)
 
     def test_experience_term_not_affected_by_form(self):

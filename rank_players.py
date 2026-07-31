@@ -121,6 +121,9 @@ def order_total(skills: dict[str, float], form_mult: float,
     order contributes to; sectors the order does not touch get nothing, which
     reproduces the game rule that e.g. a central defender's experience reaches
     side attack only with the towards-wing order.
+
+    The total is divided by 4, matching the team-rating scale used in
+    ratings.calculate_team_ratings (rating**1.2 / 4 + 1).
     """
     total = 0.0
     exp_sectors = set()
@@ -138,7 +141,7 @@ def order_total(skills: dict[str, float], form_mult: float,
     for sector in exp_sectors:
         total += weights[sector] * (
             experience_effect(exp, sector) * ratings.get_sector_factor(sector)) ** 1.2
-    return total
+    return total / 4.0
 
 
 def rank_players(players: list[dict], position: str,

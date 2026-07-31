@@ -59,6 +59,10 @@ total(order) = Σ over (skill, sector) pairs the order contributes to:
 where `calculate_sector_rating_contribution` is the existing
 `((skill − 1) × form × positional_factor × sector_factor)^1.2`.
 
+The total (including the experience terms below) is divided by 4, matching
+the team-rating scale in `ratings.calculate_team_ratings`
+(`rating**1.2 / 4 + 1`) and the `contrib / 4` convention in `optimization.py`.
+
 The (skill, sector) pairs for an order are discovered from the contributions
 table (all entries whose position code matches the order).
 
