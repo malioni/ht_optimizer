@@ -15,6 +15,7 @@ contribution for that position. Reuses the existing `contributions.py` table and
    - `FirstName`, `NickName`, `LastName` — player identity
    - `Age`, `AgeDays` — shown in output
    - `PlayerForm` — form on the 1–8 scale
+   - `Experience` — experience level (calculation scale)
    - Skill columns mapped to skill names used by `contributions.py`:
      | CSV column | Skill name |
      |---|---|
@@ -78,11 +79,34 @@ interpolation between points:
 
 Form values below 1.5 clamp to the 1.5 multiplier; above 8 clamp to 1.0.
 
+### Experience effect
+
+Experience (CSV column `Experience`) adds a flat per-sector bonus after form.
+For each sector the order contributes to (i.e. sectors with at least one skill
+contribution entry for the order code — this reproduces the game rule that a
+central defender's experience reaches side attack only with "towards wing"),
+the order total gains:
+
+```
+sector_weight × (exp_effect(exp, sector) × sector_factor)^1.2
+```
+
+where `exp_effect` is:
+
+| Sectors | Formula |
+|---|---|
+| LB, RB (side defence), M (midfield) | 0.36 × (1 − 0.85^exp) |
+| MB (central defence), LF, RF (side attack) | 0.36 × 7/8 × (1 − 0.85^exp) |
+| MF (central attack) | 0.36 × 4/5 × (1 − 0.85^exp) |
+
+The experience term is not multiplied by the form multiplier, since experience
+applies after form in the game's rating pipeline.
+
 ### Ignored factors
 
-Loyalty, experience, and stamina are ignored. Any rating-related factor not
-present in the CSV (e.g. team spirit) is assumed to be at its best value,
-which means it contributes no relative difference and is omitted.
+Loyalty and stamina are ignored. Any rating-related factor not present in the
+CSV (e.g. team spirit) is assumed to be at its best value, which means it
+contributes no relative difference and is omitted.
 
 ## Ranking
 

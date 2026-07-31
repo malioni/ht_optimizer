@@ -54,7 +54,7 @@ class TestParseWeights(unittest.TestCase):
 
 
 CSV_HEADER = (
-    "PlayerID;FirstName;NickName;LastName;Age;AgeDays;PlayerForm;StaminaSkill;"
+    "PlayerID;FirstName;NickName;LastName;Age;AgeDays;Experience;PlayerForm;StaminaSkill;"
     "KeeperSkill;PlaymakerSkill;ScorerSkill;PassingSkill;WingerSkill;"
     "DefenderSkill;SetPiecesSkill;"
 )
@@ -72,7 +72,7 @@ def write_csv(rows: list[str]) -> str:
 class TestParsePlayers(unittest.TestCase):
     def test_parses_player_row(self):
         path = write_csv([
-            "1;Danila;The Bull;Bykovskiy;21;72;7;8;1.0000;10.0200;2.0000;3.0000;8.0000;13.3299;3.0000;",
+            "1;Danila;The Bull;Bykovskiy;21;72;5;7;8;1.0000;10.0200;2.0000;3.0000;8.0000;13.3299;3.0000;",
         ])
         self.addCleanup(os.remove, path)
         players, warnings = rank_players.parse_players(path)
@@ -82,13 +82,14 @@ class TestParsePlayers(unittest.TestCase):
         self.assertEqual(player["name"], "Danila The Bull Bykovskiy")
         self.assertEqual(player["age"], "21.72")
         self.assertEqual(player["form"], 7.0)
+        self.assertEqual(player["experience"], 5.0)
         self.assertAlmostEqual(player["skills"]["Playmaking"], 10.02)
         self.assertAlmostEqual(player["skills"]["Defending"], 13.3299)
         self.assertAlmostEqual(player["skills"]["Set Pieces"], 3.0)
 
     def test_empty_nickname_omitted_from_name(self):
         path = write_csv([
-            "2;Ako;;Jansons;21;77;6;8;1.0;3.0;4.0;4.0;5.0;15.3045;2.0;",
+            "2;Ako;;Jansons;21;77;4;6;8;1.0;3.0;4.0;4.0;5.0;15.3045;2.0;",
         ])
         self.addCleanup(os.remove, path)
         players, _ = rank_players.parse_players(path)
@@ -96,8 +97,8 @@ class TestParsePlayers(unittest.TestCase):
 
     def test_malformed_row_skipped_with_warning(self):
         path = write_csv([
-            "3;Bad;;Row;21;10;7;8;1.0;oops;4.0;4.0;5.0;15.0;2.0;",
-            "4;Good;;Row;20;5;7;8;1.0;3.0;4.0;4.0;5.0;15.0;2.0;",
+            "3;Bad;;Row;21;10;3;7;8;1.0;oops;4.0;4.0;5.0;15.0;2.0;",
+            "4;Good;;Row;20;5;3;7;8;1.0;3.0;4.0;4.0;5.0;15.0;2.0;",
         ])
         self.addCleanup(os.remove, path)
         players, warnings = rank_players.parse_players(path)
@@ -155,8 +156,10 @@ class TestOrderTotal(unittest.TestCase):
 class TestRankPlayers(unittest.TestCase):
     def test_orders_by_best_total(self):
         players = [
-            {"name": "Weak", "age": "20.1", "form": 7.0, "skills": base_skills(Defending=5.0)},
-            {"name": "Strong", "age": "20.1", "form": 7.0, "skills": base_skills(Defending=10.0)},
+            {"name": "Weak", "age": "20.1", "form": 7.0, "experience": 0.0,
+             "skills": base_skills(Defending=5.0)},
+            {"name": "Strong", "age": "20.1", "form": 7.0, "experience": 0.0,
+             "skills": base_skills(Defending=10.0)},
         ]
         ranked = rank_players.rank_players(players, "central defender", ALL_ONE_WEIGHTS)
         self.assertEqual([p["name"] for p in ranked], ["Strong", "Weak"])
@@ -172,19 +175,61 @@ class TestRankPlayers(unittest.TestCase):
             "WingCD": {"RCD": 10.0, "RCDTW": 7.0, "ROCD": 3.0},
         }
         original = rank_players.order_total
-        rank_players.order_total = lambda skills, fm, code, w: fake_totals[skills["who"]][code]
+        rank_players.order_total = (
+            lambda skills, fm, code, w, exp=0.0: fake_totals[skills["who"]][code])
         self.addCleanup(setattr, rank_players, "order_total", original)
         players = [
-            {"name": "PlainCD", "age": "20.1", "form": 7.0, "skills": {"who": "PlainCD"}},
-            {"name": "WingCD", "age": "20.1", "form": 7.0, "skills": {"who": "WingCD"}},
+            {"name": "PlainCD", "age": "20.1", "form": 7.0, "experience": 0.0,
+             "skills": {"who": "PlainCD"}},
+            {"name": "WingCD", "age": "20.1", "form": 7.0, "experience": 0.0,
+             "skills": {"who": "WingCD"}},
         ]
         ranked = rank_players.rank_players(players, "central defender", ALL_ONE_WEIGHTS)
         self.assertEqual([p["name"] for p in ranked], ["WingCD", "PlainCD"])
         self.assertEqual(ranked[0]["totals"]["normal"], ranked[1]["totals"]["normal"])
 
 
-FULL_ROW = "1;Ako;;Jansons;21;77;7;8;1.0;3.0;4.0;4.0;5.0;15.3045;2.0;"
-FULL_ROW_2 = "2;Weak;;Player;19;10;5;6;1.0;2.0;2.0;2.0;3.0;6.0;1.0;"
+class TestExperienceEffect(unittest.TestCase):
+    def test_sector_formulas(self):
+        decay = 1 - 0.85 ** 4
+        self.assertAlmostEqual(rank_players.experience_effect(4.0, "LB"), 0.36 * decay)
+        self.assertAlmostEqual(rank_players.experience_effect(4.0, "RB"), 0.36 * decay)
+        self.assertAlmostEqual(rank_players.experience_effect(4.0, "M"), 0.36 * decay)
+        self.assertAlmostEqual(rank_players.experience_effect(4.0, "MB"), 0.36 * 7 / 8 * decay)
+        self.assertAlmostEqual(rank_players.experience_effect(4.0, "LF"), 0.36 * 7 / 8 * decay)
+        self.assertAlmostEqual(rank_players.experience_effect(4.0, "RF"), 0.36 * 7 / 8 * decay)
+        self.assertAlmostEqual(rank_players.experience_effect(4.0, "MF"), 0.36 * 4 / 5 * decay)
+
+    def test_zero_experience_gives_zero(self):
+        for sector in ["LB", "MB", "RB", "M", "LF", "MF", "RF"]:
+            self.assertEqual(rank_players.experience_effect(0.0, sector), 0.0)
+
+    def test_order_total_adds_experience_only_to_contributing_sectors(self):
+        # Skills all at 1 -> skill terms are zero; RCD contributes to MB, RB, M only.
+        expected = sum(
+            (rank_players.experience_effect(5.0, sector)
+             * ratings.get_sector_factor(sector)) ** 1.2
+            for sector in ["MB", "RB", "M"]
+        )
+        total = rank_players.order_total(base_skills(), 1.0, "RCD", ALL_ONE_WEIGHTS, exp=5.0)
+        self.assertAlmostEqual(total, expected)
+
+    def test_cd_towards_wing_gets_side_attack_experience(self):
+        # RCDTW also contributes to RF (Winger), so its experience reaches side attack.
+        rcd = rank_players.order_total(base_skills(), 1.0, "RCD", ALL_ONE_WEIGHTS, exp=5.0)
+        rcdtw = rank_players.order_total(base_skills(), 1.0, "RCDTW", ALL_ONE_WEIGHTS, exp=5.0)
+        rf_term = (rank_players.experience_effect(5.0, "RF")
+                   * ratings.get_sector_factor("RF")) ** 1.2
+        self.assertAlmostEqual(rcdtw - rcd, rf_term)
+
+    def test_experience_term_not_affected_by_form(self):
+        low_form = rank_players.order_total(base_skills(), 0.5, "RCD", ALL_ONE_WEIGHTS, exp=5.0)
+        high_form = rank_players.order_total(base_skills(), 1.0, "RCD", ALL_ONE_WEIGHTS, exp=5.0)
+        self.assertAlmostEqual(low_form, high_form)
+
+
+FULL_ROW = "1;Ako;;Jansons;21;77;4;7;8;1.0;3.0;4.0;4.0;5.0;15.3045;2.0;"
+FULL_ROW_2 = "2;Weak;;Player;19;10;2;5;6;1.0;2.0;2.0;2.0;3.0;6.0;1.0;"
 
 
 class TestMain(unittest.TestCase):

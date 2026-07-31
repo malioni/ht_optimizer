@@ -29,6 +29,17 @@ def form_multiplier(form: float) -> float:
 
 SECTORS = ["LB", "MB", "RB", "M", "LF", "MF", "RF"]
 
+# Experience adds a flat per-sector bonus after form; coefficients differ by line.
+EXP_SECTOR_COEFF = {
+    "LB": 0.36, "RB": 0.36, "M": 0.36,
+    "MB": 0.36 * 7 / 8, "LF": 0.36 * 7 / 8, "RF": 0.36 * 7 / 8,
+    "MF": 0.36 * 4 / 5,
+}
+
+
+def experience_effect(exp: float, sector: str) -> float:
+    return EXP_SECTOR_COEFF[sector] * (1 - 0.85 ** exp)
+
 # Order label -> contribution-table position code (right side; tables are symmetric).
 POSITION_ORDERS = {
     "goalkeeper": {"normal": "GK"},
@@ -87,6 +98,7 @@ def parse_players(csv_path: str) -> tuple[list[dict], list[str]]:
             try:
                 skills = {skill: float(row[column]) for column, skill in SKILL_COLUMNS.items()}
                 form = float(row["PlayerForm"])
+                experience = float(row["Experience"])
             except (KeyError, TypeError, ValueError) as exc:
                 warnings.append(f"skipping {name or '<unnamed row>'}: bad or missing value ({exc})")
                 continue
@@ -94,18 +106,28 @@ def parse_players(csv_path: str) -> tuple[list[dict], list[str]]:
                 "name": name,
                 "age": f"{row.get('Age', '?')}.{row.get('AgeDays', '?')}",
                 "form": form,
+                "experience": experience,
                 "skills": skills,
             })
     return players, warnings
 
 
 def order_total(skills: dict[str, float], form_mult: float,
-                order_code: str, weights: dict[str, float]) -> float:
-    """Weighted sum of a player's sector rating contributions for one order."""
+                order_code: str, weights: dict[str, float],
+                exp: float = 0.0) -> float:
+    """Weighted sum of a player's sector rating contributions for one order.
+
+    Experience adds a flat bonus (independent of form) to every sector the
+    order contributes to; sectors the order does not touch get nothing, which
+    reproduces the game rule that e.g. a central defender's experience reaches
+    side attack only with the towards-wing order.
+    """
     total = 0.0
+    exp_sectors = set()
     for (position, skill, sector) in contributions.contributions:
         if position != order_code:
             continue
+        exp_sectors.add(sector)
         total += weights[sector] * ratings.calculate_sector_rating_contribution(
             skill_level=skills[skill],
             skill_type=skill,
@@ -113,6 +135,9 @@ def order_total(skills: dict[str, float], form_mult: float,
             position=order_code,
             form=form_mult,
         )
+    for sector in exp_sectors:
+        total += weights[sector] * (
+            experience_effect(exp, sector) * ratings.get_sector_factor(sector)) ** 1.2
     return total
 
 
@@ -128,7 +153,8 @@ def rank_players(players: list[dict], position: str,
     for player in players:
         form_mult = form_multiplier(player["form"])
         totals = {
-            label: order_total(player["skills"], form_mult, code, weights)
+            label: order_total(player["skills"], form_mult, code, weights,
+                               exp=player["experience"])
             for label, code in orders.items()
         }
         entry = dict(player)
@@ -140,11 +166,12 @@ def rank_players(players: list[dict], position: str,
 
 
 def format_table(ranked: list[dict], order_labels: list[str]) -> str:
-    headers = ["Rank", "Player", "Age", "Form"] + order_labels + ["Best"]
+    headers = ["Rank", "Player", "Age", "Form", "Exp"] + order_labels + ["Best"]
     rows = []
     for rank, entry in enumerate(ranked, start=1):
         rows.append(
-            [str(rank), entry["name"], entry["age"], f"{entry['form']:g}"]
+            [str(rank), entry["name"], entry["age"], f"{entry['form']:g}",
+             f"{entry['experience']:g}"]
             + [f"{entry['totals'][label]:.3f}" for label in order_labels]
             + [entry["best_order"]]
         )
@@ -162,10 +189,10 @@ def format_table(ranked: list[dict], order_labels: list[str]) -> str:
 def write_output_csv(path: str, ranked: list[dict], order_labels: list[str]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Rank", "Player", "Age", "Form"] + order_labels + ["Best"])
+        writer.writerow(["Rank", "Player", "Age", "Form", "Exp"] + order_labels + ["Best"])
         for rank, entry in enumerate(ranked, start=1):
             writer.writerow(
-                [rank, entry["name"], entry["age"], entry["form"]]
+                [rank, entry["name"], entry["age"], entry["form"], entry["experience"]]
                 + [f"{entry['totals'][label]:.4f}" for label in order_labels]
                 + [entry["best_order"]]
             )
