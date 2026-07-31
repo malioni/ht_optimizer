@@ -1,6 +1,8 @@
 """Rank players from a CSV export by rating contribution for a position."""
 
+import argparse
 import csv
+import sys
 
 import contributions
 import ratings
@@ -135,3 +137,70 @@ def rank_players(players: list[dict], position: str,
         ranked.append(entry)
     ranked.sort(key=lambda e: sorted(e["totals"].values(), reverse=True), reverse=True)
     return ranked
+
+
+def format_table(ranked: list[dict], order_labels: list[str]) -> str:
+    headers = ["Rank", "Player", "Age", "Form"] + order_labels + ["Best"]
+    rows = []
+    for rank, entry in enumerate(ranked, start=1):
+        rows.append(
+            [str(rank), entry["name"], entry["age"], f"{entry['form']:g}"]
+            + [f"{entry['totals'][label]:.3f}" for label in order_labels]
+            + [entry["best_order"]]
+        )
+    widths = [max(len(headers[i]), *(len(row[i]) for row in rows)) if rows else len(headers[i])
+              for i in range(len(headers))]
+    lines = [
+        "  ".join(header.ljust(widths[i]) for i, header in enumerate(headers)),
+        "  ".join("-" * width for width in widths),
+    ]
+    for row in rows:
+        lines.append("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
+    return "\n".join(lines)
+
+
+def write_output_csv(path: str, ranked: list[dict], order_labels: list[str]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Rank", "Player", "Age", "Form"] + order_labels + ["Best"])
+        for rank, entry in enumerate(ranked, start=1):
+            writer.writerow(
+                [rank, entry["name"], entry["age"], entry["form"]]
+                + [f"{entry['totals'][label]:.4f}" for label in order_labels]
+                + [entry["best_order"]]
+            )
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Rank players from a CSV export by rating contribution for a position.")
+    parser.add_argument("csv_file", help="semicolon-separated player export")
+    parser.add_argument("position",
+                        help="goalkeeper, wingback, central defender, inner midfielder, "
+                             "winger or forward (case-insensitive; _ or - work as spaces)")
+    parser.add_argument("--weights", default=None,
+                        help="sector weight overrides, e.g. MB=1.2,M=3 "
+                             "(sectors LB,MB,RB,M,LF,MF,RF; default 1.0 each)")
+    parser.add_argument("--out", default=None, help="also write the ranking to this CSV file")
+    args = parser.parse_args(argv)
+
+    try:
+        position = normalize_position(args.position)
+        weights = parse_weights(args.weights)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    players, warnings = parse_players(args.csv_file)
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+
+    ranked = rank_players(players, position, weights)
+    order_labels = list(POSITION_ORDERS[position])
+    print(format_table(ranked, order_labels))
+    if args.out:
+        write_output_csv(args.out, ranked, order_labels)
+        print(f"\nwrote {args.out}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

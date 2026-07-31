@@ -1,3 +1,6 @@
+import contextlib
+import csv
+import io
 import os
 import tempfile
 import unittest
@@ -178,6 +181,57 @@ class TestRankPlayers(unittest.TestCase):
         ranked = rank_players.rank_players(players, "central defender", ALL_ONE_WEIGHTS)
         self.assertEqual([p["name"] for p in ranked], ["WingCD", "PlainCD"])
         self.assertEqual(ranked[0]["totals"]["normal"], ranked[1]["totals"]["normal"])
+
+
+FULL_ROW = "1;Ako;;Jansons;21;77;7;8;1.0;3.0;4.0;4.0;5.0;15.3045;2.0;"
+FULL_ROW_2 = "2;Weak;;Player;19;10;5;6;1.0;2.0;2.0;2.0;3.0;6.0;1.0;"
+
+
+class TestMain(unittest.TestCase):
+    def run_main(self, argv):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            rank_players.main(argv)
+        return stdout.getvalue()
+
+    def test_prints_ranked_table(self):
+        path = write_csv([FULL_ROW_2, FULL_ROW])
+        self.addCleanup(os.remove, path)
+        out = self.run_main([path, "wingback"])
+        lines = [line for line in out.splitlines() if line.strip()]
+        self.assertIn("normal", lines[0])
+        self.assertIn("towards middle", lines[0])
+        ako_line = next(line for line in lines if "Ako Jansons" in line)
+        weak_line = next(line for line in lines if "Weak Player" in line)
+        self.assertLess(lines.index(ako_line), lines.index(weak_line))
+        self.assertTrue(ako_line.strip().startswith("1"))
+
+    def test_out_writes_csv(self):
+        path = write_csv([FULL_ROW, FULL_ROW_2])
+        self.addCleanup(os.remove, path)
+        out_path = path + ".ranked.csv"
+        self.addCleanup(os.remove, out_path)
+        self.run_main([path, "wingback", "--out", out_path])
+        with open(out_path, encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["Player"], "Ako Jansons")
+        self.assertEqual(rows[0]["Rank"], "1")
+        self.assertIn("normal", rows[0])
+
+    def test_weights_change_ranking_totals(self):
+        path = write_csv([FULL_ROW])
+        self.addCleanup(os.remove, path)
+        plain = self.run_main([path, "winger"])
+        weighted = self.run_main([path, "winger", "--weights", "RF=5"])
+        self.assertNotEqual(plain, weighted)
+
+    def test_unknown_position_exits_with_error(self):
+        path = write_csv([FULL_ROW])
+        self.addCleanup(os.remove, path)
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.run_main([path, "libero"])
 
 
 if __name__ == "__main__":
