@@ -98,6 +98,19 @@ class TestParsePlayers(unittest.TestCase):
         self.assertEqual(players[0]["name"], "Ako Jansons")
         self.assertEqual(players[0]["specialty"], "")
 
+    def test_decimal_comma_values_parsed(self):
+        # Locale-dependent exports write decimals with commas (e.g. "1,0000").
+        path = write_csv([
+            "5;Komats;;Vērtība;20;30;3;5;H;6,5;8;1,0000;10,0200;2,0;3,0;8,0;13,3299;3,0;",
+        ])
+        self.addCleanup(os.remove, path)
+        players, warnings = rank_players.parse_players(path)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(players), 1)
+        self.assertEqual(players[0]["form"], 6.5)
+        self.assertAlmostEqual(players[0]["skills"]["Playmaking"], 10.02)
+        self.assertAlmostEqual(players[0]["skills"]["Defending"], 13.3299)
+
     def test_malformed_row_skipped_with_warning(self):
         path = write_csv([
             "3;Bad;;Row;21;10;3;0;;7;8;1.0;oops;4.0;4.0;5.0;15.0;2.0;",

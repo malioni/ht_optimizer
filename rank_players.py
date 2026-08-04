@@ -85,7 +85,7 @@ def parse_specialty(row: dict) -> str:
     fallback = (row.get("SpecialtyName") or "").strip()
     raw = (row.get("Specialty") or "").strip()
     try:
-        return SPECIALTY_NAMES.get(int(float(raw)), fallback)
+        return SPECIALTY_NAMES.get(int(parse_float(raw)), fallback)
     except ValueError:
         return fallback
 
@@ -101,6 +101,11 @@ SKILL_COLUMNS = {
 }
 
 
+def parse_float(value: str) -> float:
+    """Parse a number that may use a decimal comma (locale-dependent exports)."""
+    return float(str(value).strip().replace(",", "."))
+
+
 def parse_players(csv_path: str) -> tuple[list[dict], list[str]]:
     """Read the player export; returns (players, warnings for skipped rows)."""
     players = []
@@ -112,9 +117,9 @@ def parse_players(csv_path: str) -> tuple[list[dict], list[str]]:
                 if part
             )
             try:
-                skills = {skill: float(row[column]) for column, skill in SKILL_COLUMNS.items()}
-                form = float(row["PlayerForm"])
-                experience = float(row["Experience"])
+                skills = {skill: parse_float(row[column]) for column, skill in SKILL_COLUMNS.items()}
+                form = parse_float(row["PlayerForm"])
+                experience = parse_float(row["Experience"])
             except (KeyError, TypeError, ValueError) as exc:
                 warnings.append(f"skipping {name or '<unnamed row>'}: bad or missing value ({exc})")
                 continue
