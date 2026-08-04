@@ -54,7 +54,8 @@ class TestParseWeights(unittest.TestCase):
 
 
 CSV_HEADER = (
-    "PlayerID;FirstName;NickName;LastName;Age;AgeDays;Experience;PlayerForm;StaminaSkill;"
+    "PlayerID;FirstName;NickName;LastName;Age;AgeDays;Experience;Specialty;SpecialtyName;"
+    "PlayerForm;StaminaSkill;"
     "KeeperSkill;PlaymakerSkill;ScorerSkill;PassingSkill;WingerSkill;"
     "DefenderSkill;SetPiecesSkill;"
 )
@@ -72,7 +73,7 @@ def write_csv(rows: list[str]) -> str:
 class TestParsePlayers(unittest.TestCase):
     def test_parses_player_row(self):
         path = write_csv([
-            "1;Danila;The Bull;Bykovskiy;21;72;5;7;8;1.0000;10.0200;2.0000;3.0000;8.0000;13.3299;3.0000;",
+            "1;Danila;The Bull;Bykovskiy;21;72;5;5;H;7;8;1.0000;10.0200;2.0000;3.0000;8.0000;13.3299;3.0000;",
         ])
         self.addCleanup(os.remove, path)
         players, warnings = rank_players.parse_players(path)
@@ -83,22 +84,24 @@ class TestParsePlayers(unittest.TestCase):
         self.assertEqual(player["age"], "21.72")
         self.assertEqual(player["form"], 7.0)
         self.assertEqual(player["experience"], 5.0)
+        self.assertEqual(player["specialty"], "Head")
         self.assertAlmostEqual(player["skills"]["Playmaking"], 10.02)
         self.assertAlmostEqual(player["skills"]["Defending"], 13.3299)
         self.assertAlmostEqual(player["skills"]["Set Pieces"], 3.0)
 
     def test_empty_nickname_omitted_from_name(self):
         path = write_csv([
-            "2;Ako;;Jansons;21;77;4;6;8;1.0;3.0;4.0;4.0;5.0;15.3045;2.0;",
+            "2;Ako;;Jansons;21;77;4;0;;6;8;1.0;3.0;4.0;4.0;5.0;15.3045;2.0;",
         ])
         self.addCleanup(os.remove, path)
         players, _ = rank_players.parse_players(path)
         self.assertEqual(players[0]["name"], "Ako Jansons")
+        self.assertEqual(players[0]["specialty"], "")
 
     def test_malformed_row_skipped_with_warning(self):
         path = write_csv([
-            "3;Bad;;Row;21;10;3;7;8;1.0;oops;4.0;4.0;5.0;15.0;2.0;",
-            "4;Good;;Row;20;5;3;7;8;1.0;3.0;4.0;4.0;5.0;15.0;2.0;",
+            "3;Bad;;Row;21;10;3;0;;7;8;1.0;oops;4.0;4.0;5.0;15.0;2.0;",
+            "4;Good;;Row;20;5;3;0;;7;8;1.0;3.0;4.0;4.0;5.0;15.0;2.0;",
         ])
         self.addCleanup(os.remove, path)
         players, warnings = rank_players.parse_players(path)
@@ -228,8 +231,50 @@ class TestExperienceEffect(unittest.TestCase):
         self.assertAlmostEqual(low_form, high_form)
 
 
-FULL_ROW = "1;Ako;;Jansons;21;77;4;7;8;1.0;3.0;4.0;4.0;5.0;15.3045;2.0;"
-FULL_ROW_2 = "2;Weak;;Player;19;10;2;5;6;1.0;2.0;2.0;2.0;3.0;6.0;1.0;"
+class TestRankOptions(unittest.TestCase):
+    def make_players(self):
+        return [
+            {"name": "GoodForm", "age": "20.1", "form": 8.0, "experience": 3.0,
+             "specialty": "", "skills": base_skills(Defending=10.0)},
+            {"name": "BadForm", "age": "20.1", "form": 4.0, "experience": 3.0,
+             "specialty": "", "skills": base_skills(Defending=10.0)},
+        ]
+
+    def test_use_form_false_treats_all_forms_as_max(self):
+        ranked = rank_players.rank_players(
+            self.make_players(), "central defender", ALL_ONE_WEIGHTS, use_form=False)
+        self.assertEqual(ranked[0]["totals"], ranked[1]["totals"])
+
+    def test_use_form_true_separates_players(self):
+        ranked = rank_players.rank_players(
+            self.make_players(), "central defender", ALL_ONE_WEIGHTS, use_form=True)
+        self.assertEqual(ranked[0]["name"], "GoodForm")
+        self.assertNotEqual(ranked[0]["totals"], ranked[1]["totals"])
+
+    def test_orders_filter_limits_totals_and_best(self):
+        ranked = rank_players.rank_players(
+            self.make_players(), "central defender", ALL_ONE_WEIGHTS,
+            orders=["normal", "offensive"])
+        self.assertEqual(set(ranked[0]["totals"]), {"normal", "offensive"})
+        self.assertIn(ranked[0]["best_order"], {"normal", "offensive"})
+
+    def test_unknown_order_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            rank_players.rank_players(
+                self.make_players(), "central defender", ALL_ONE_WEIGHTS,
+                orders=["normal", "sweeper"])
+        self.assertIn("towards wing", str(ctx.exception))
+
+    def test_average_is_mean_of_enabled_order_totals(self):
+        ranked = rank_players.rank_players(
+            self.make_players(), "central defender", ALL_ONE_WEIGHTS)
+        entry = ranked[0]
+        expected = sum(entry["totals"].values()) / len(entry["totals"])
+        self.assertAlmostEqual(entry["average"], expected)
+
+
+FULL_ROW = "1;Ako;;Jansons;21;77;4;2;Q;7;8;1.0;3.0;4.0;4.0;5.0;15.3045;2.0;"
+FULL_ROW_2 = "2;Weak;;Player;19;10;2;0;;5;6;1.0;2.0;2.0;2.0;3.0;6.0;1.0;"
 
 
 class TestMain(unittest.TestCase):
@@ -270,6 +315,30 @@ class TestMain(unittest.TestCase):
         plain = self.run_main([path, "winger"])
         weighted = self.run_main([path, "winger", "--weights", "RF=5"])
         self.assertNotEqual(plain, weighted)
+
+    def test_orders_flag_limits_columns(self):
+        path = write_csv([FULL_ROW])
+        self.addCleanup(os.remove, path)
+        out = self.run_main([path, "wingback", "--orders", "normal,defensive"])
+        header = out.splitlines()[0]
+        self.assertIn("normal", header)
+        self.assertIn("defensive", header)
+        self.assertNotIn("towards middle", header)
+
+    def test_ignore_form_flag_runs(self):
+        path = write_csv([FULL_ROW, FULL_ROW_2])
+        self.addCleanup(os.remove, path)
+        out = self.run_main([path, "wingback", "--ignore-form"])
+        self.assertIn("Ako Jansons", out)
+
+    def test_table_includes_spec_and_avg_columns(self):
+        path = write_csv([FULL_ROW])
+        self.addCleanup(os.remove, path)
+        out = self.run_main([path, "wingback"])
+        header = out.splitlines()[0]
+        self.assertIn("Spec", header)
+        self.assertIn("Avg", header)
+        self.assertIn("Quick", out)
 
     def test_unknown_position_exits_with_error(self):
         path = write_csv([FULL_ROW])

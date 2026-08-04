@@ -74,6 +74,22 @@ def parse_weights(spec: str | None) -> dict[str, float]:
     return weights
 
 
+SPECIALTY_NAMES = {
+    0: "", 1: "Technical", 2: "Quick", 3: "Powerful",
+    4: "Unpredictable", 5: "Head", 6: "Regainer", 8: "Support",
+}
+
+
+def parse_specialty(row: dict) -> str:
+    """Map the numeric Specialty column to a name, falling back to SpecialtyName."""
+    fallback = (row.get("SpecialtyName") or "").strip()
+    raw = (row.get("Specialty") or "").strip()
+    try:
+        return SPECIALTY_NAMES.get(int(float(raw)), fallback)
+    except ValueError:
+        return fallback
+
+
 SKILL_COLUMNS = {
     "KeeperSkill": "Goalkeeping",
     "DefenderSkill": "Defending",
@@ -107,6 +123,7 @@ def parse_players(csv_path: str) -> tuple[list[dict], list[str]]:
                 "age": f"{row.get('Age', '?')}.{row.get('AgeDays', '?')}",
                 "form": form,
                 "experience": experience,
+                "specialty": parse_specialty(row),
                 "skills": skills,
             })
     return players, warnings
@@ -145,38 +162,53 @@ def order_total(skills: dict[str, float], form_mult: float,
 
 
 def rank_players(players: list[dict], position: str,
-                 weights: dict[str, float]) -> list[dict]:
+                 weights: dict[str, float],
+                 use_form: bool = True,
+                 orders: list[str] | None = None) -> list[dict]:
     """Return players sorted best-first for the position.
 
     Comparison is lexicographic on each player's descending per-order totals:
     highest total first, ties broken by the second-highest, and so on.
+    With use_form=False every player is treated as being at maximum form.
+    `orders` restricts which of the position's orders are considered
+    (labels like "normal", "defensive"); None means all of them.
     """
-    orders = POSITION_ORDERS[position]
+    all_orders = POSITION_ORDERS[position]
+    if orders is None:
+        orders = list(all_orders)
+    else:
+        unknown = [label for label in orders if label not in all_orders]
+        if unknown:
+            valid = ", ".join(all_orders)
+            raise ValueError(
+                f"unknown order(s) {', '.join(unknown)} for {position}; valid orders: {valid}")
     ranked = []
     for player in players:
-        form_mult = form_multiplier(player["form"])
+        form_mult = form_multiplier(player["form"]) if use_form else 1.0
         totals = {
-            label: order_total(player["skills"], form_mult, code, weights,
+            label: order_total(player["skills"], form_mult, all_orders[label], weights,
                                exp=player["experience"])
-            for label, code in orders.items()
+            for label in orders
         }
         entry = dict(player)
         entry["totals"] = totals
         entry["best_order"] = max(totals, key=totals.get)
+        entry["average"] = sum(totals.values()) / len(totals)
         ranked.append(entry)
     ranked.sort(key=lambda e: sorted(e["totals"].values(), reverse=True), reverse=True)
     return ranked
 
 
 def format_table(ranked: list[dict], order_labels: list[str]) -> str:
-    headers = ["Rank", "Player", "Age", "Form", "Exp"] + order_labels + ["Best"]
+    headers = (["Rank", "Player", "Age", "Form", "Exp", "Spec"]
+               + order_labels + ["Avg", "Best"])
     rows = []
     for rank, entry in enumerate(ranked, start=1):
         rows.append(
             [str(rank), entry["name"], entry["age"], f"{entry['form']:g}",
-             f"{entry['experience']:g}"]
+             f"{entry['experience']:g}", entry["specialty"]]
             + [f"{entry['totals'][label]:.3f}" for label in order_labels]
-            + [entry["best_order"]]
+            + [f"{entry['average']:.3f}", entry["best_order"]]
         )
     widths = [max(len(headers[i]), *(len(row[i]) for row in rows)) if rows else len(headers[i])
               for i in range(len(headers))]
@@ -192,12 +224,14 @@ def format_table(ranked: list[dict], order_labels: list[str]) -> str:
 def write_output_csv(path: str, ranked: list[dict], order_labels: list[str]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Rank", "Player", "Age", "Form", "Exp"] + order_labels + ["Best"])
+        writer.writerow(["Rank", "Player", "Age", "Form", "Exp", "Spec"]
+                        + order_labels + ["Avg", "Best"])
         for rank, entry in enumerate(ranked, start=1):
             writer.writerow(
-                [rank, entry["name"], entry["age"], entry["form"], entry["experience"]]
+                [rank, entry["name"], entry["age"], entry["form"], entry["experience"],
+                 entry["specialty"]]
                 + [f"{entry['totals'][label]:.4f}" for label in order_labels]
-                + [entry["best_order"]]
+                + [f"{entry['average']:.4f}", entry["best_order"]]
             )
 
 
@@ -212,7 +246,16 @@ def main(argv: list[str] | None = None) -> None:
                         help="sector weight overrides, e.g. MB=1.2,M=3 "
                              "(sectors LB,MB,RB,M,LF,MF,RF; default 1.0 each)")
     parser.add_argument("--out", default=None, help="also write the ranking to this CSV file")
+    parser.add_argument("--ignore-form", action="store_true",
+                        help="treat every player as being at maximum form")
+    parser.add_argument("--orders", default=None,
+                        help="comma-separated orders to consider, e.g. \"normal,defensive\" "
+                             "(default: all orders of the position)")
     args = parser.parse_args(argv)
+
+    order_labels = None
+    if args.orders:
+        order_labels = [label.strip().lower() for label in args.orders.split(",")]
 
     try:
         position = normalize_position(args.position)
@@ -224,8 +267,14 @@ def main(argv: list[str] | None = None) -> None:
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
 
-    ranked = rank_players(players, position, weights)
-    order_labels = list(POSITION_ORDERS[position])
+    try:
+        ranked = rank_players(players, position, weights,
+                              use_form=not args.ignore_form, orders=order_labels)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if order_labels is None:
+        order_labels = list(POSITION_ORDERS[position])
     print(format_table(ranked, order_labels))
     if args.out:
         write_output_csv(args.out, ranked, order_labels)
