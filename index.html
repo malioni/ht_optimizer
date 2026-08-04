@@ -37,7 +37,7 @@
     color: var(--text);
     line-height: 1.5;
   }
-  .wrap { max-width: 1000px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  .wrap { max-width: 1350px; margin: 0 auto; padding: 2rem 1rem 4rem; }
   h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
   .subtitle { color: var(--muted); margin: 0 0 1.5rem; font-size: 0.95rem; }
   .card {
@@ -63,6 +63,12 @@
   .weights div { text-align: center; }
   .weights label { font-weight: 500; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.15rem; }
   .weights input { width: 4.2rem; text-align: center; }
+  .checks { display: flex; flex-wrap: wrap; gap: 0.35rem 1.1rem; margin-top: 0.4rem; }
+  .checks label {
+    font-weight: 500; font-size: 0.85rem; display: flex; align-items: center;
+    gap: 0.35rem; margin: 0; cursor: pointer; white-space: nowrap;
+  }
+  .checks input { accent-color: var(--accent); }
   button {
     font: inherit;
     font-weight: 600;
@@ -80,7 +86,12 @@
   .table-scroll { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
   th, td { padding: 0.45rem 0.7rem; text-align: left; white-space: nowrap; }
-  th { border-bottom: 2px solid var(--border); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+  th {
+    border-bottom: 2px solid var(--border); font-size: 0.8rem; text-transform: uppercase;
+    letter-spacing: 0.03em; color: var(--muted); cursor: pointer; user-select: none;
+  }
+  th:hover { color: var(--accent); }
+  th .arrow { font-size: 0.7rem; }
   tbody tr:nth-child(even) { background: var(--row-alt); }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.best-val { font-weight: 700; color: var(--accent); }
@@ -94,7 +105,8 @@
 <div class="wrap">
   <h1>HT Player Position Ranker</h1>
   <p class="subtitle">Upload a player CSV export, pick a position, and rank players by their rating
-  contribution for each individual order. All computation runs in your browser.</p>
+  contribution for each individual order. All computation runs in your browser.
+  Click a column header to sort by it.</p>
 
   <div class="card">
     <label for="file">Player CSV export <span class="hint">(semicolon-separated)</span></label>
@@ -114,6 +126,18 @@
           <option value="forward">Forward</option>
         </select>
       </div>
+      <div>
+        <label>Orders considered</label>
+        <div class="checks" id="orders"></div>
+      </div>
+      <div>
+        <label>Options</label>
+        <div class="checks">
+          <label><input type="checkbox" id="use-form" checked> account for current form</label>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
       <div>
         <label>Sector weights <span class="hint">(multiply each sector's contribution)</span></label>
         <div class="weights" id="weights"></div>
@@ -144,7 +168,9 @@ const PY_FILES = ["contributions.py", "ratings.py", "rank_players.py"];
 
 const el = (id) => document.getElementById(id);
 let pyRun = null;
+let ordersByPosition = null;
 let lastResult = null;
+let sortState = { key: "__default", asc: false };
 
 // Visible, editable sector weights (default 1.0 each)
 for (const s of SECTORS) {
@@ -162,18 +188,35 @@ for (const s of SECTORS) {
   el("weights").append(box);
 }
 
+function renderOrderChecks() {
+  const labels = ordersByPosition ? ordersByPosition[el("position").value] : [];
+  el("orders").innerHTML = "";
+  for (const label of labels) {
+    const wrap = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+    box.value = label;
+    wrap.append(box, document.createTextNode(label));
+    el("orders").append(wrap);
+  }
+}
+el("position").addEventListener("change", renderOrderChecks);
+
 const GLUE = `
 import json
 import rank_players
 
-def run_ranking(csv_text, position, weights_json):
+def run_ranking(csv_text, position, weights_json, use_form, orders_json):
     with open("upload.csv", "w", encoding="utf-8") as f:
         f.write(csv_text)
     weights = {k: float(v) for k, v in json.loads(weights_json).items()}
+    orders = json.loads(orders_json)
     position = rank_players.normalize_position(position)
     players, warnings = rank_players.parse_players("upload.csv")
-    ranked = rank_players.rank_players(players, position, weights)
-    labels = list(rank_players.POSITION_ORDERS[position])
+    ranked = rank_players.rank_players(players, position, weights,
+                                       use_form=use_form, orders=orders)
+    labels = orders if orders else list(rank_players.POSITION_ORDERS[position])
     rows = [
         {
             "rank": i,
@@ -181,12 +224,17 @@ def run_ranking(csv_text, position, weights_json):
             "age": e["age"],
             "form": e["form"],
             "exp": e["experience"],
+            "spec": e["specialty"],
             "totals": {label: e["totals"][label] for label in labels},
+            "avg": e["average"],
             "best": e["best_order"],
         }
         for i, e in enumerate(ranked, start=1)
     ]
     return json.dumps({"labels": labels, "rows": rows, "warnings": warnings})
+
+def position_orders_json():
+    return json.dumps({p: list(o) for p, o in rank_players.POSITION_ORDERS.items()})
 `;
 
 async function init() {
@@ -199,6 +247,8 @@ async function init() {
     }
     pyodide.runPython(GLUE);
     pyRun = pyodide.globals.get("run_ranking");
+    ordersByPosition = JSON.parse(pyodide.globals.get("position_orders_json")());
+    renderOrderChecks();
     el("status").textContent = "Ready.";
     el("run").disabled = false;
   } catch (err) {
@@ -216,62 +266,134 @@ async function getCsvText() {
 el("run").addEventListener("click", async () => {
   const csvText = await getCsvText();
   if (!csvText) {
-    el("status").textContent = "Choose a CSV file or paste its contents first.";
-    el("status").className = "error";
+    setStatus("Choose a CSV file or paste its contents first.", true);
+    return;
+  }
+  const enabled = [...el("orders").querySelectorAll("input:checked")].map(b => b.value);
+  if (!enabled.length) {
+    setStatus("Enable at least one order.", true);
     return;
   }
   const weights = {};
   for (const s of SECTORS) weights[s] = parseFloat(el("w-" + s).value) || 0;
   try {
-    const result = JSON.parse(pyRun(csvText, el("position").value, JSON.stringify(weights)));
+    const result = JSON.parse(pyRun(
+      csvText, el("position").value, JSON.stringify(weights),
+      el("use-form").checked, JSON.stringify(enabled)));
     lastResult = result;
+    sortState = { key: "__default", asc: false };
     render(result);
-    el("status").textContent = "Ready.";
-    el("status").className = "";
+    setStatus("Ready.", false);
   } catch (err) {
-    el("status").textContent = "Error: " + err;
-    el("status").className = "error";
+    setStatus("Error: " + err, true);
   }
 });
 
-function render(result) {
+function setStatus(text, isError) {
+  el("status").textContent = text;
+  el("status").className = isError ? "error" : "";
+}
+
+function ageDays(age) {
+  const [years, days] = String(age).split(".");
+  return (parseInt(years, 10) || 0) * 112 + (parseInt(days, 10) || 0);
+}
+
+function sortValue(row, key) {
+  if (key === "rank") return row.rank;
+  if (key === "name") return row.name;
+  if (key === "age") return ageDays(row.age);
+  if (key === "form") return row.form;
+  if (key === "exp") return row.exp;
+  if (key === "spec") return row.spec;
+  if (key === "avg") return row.avg;
+  return row.totals[key];
+}
+
+function sortedRows() {
+  const rows = [...lastResult.rows];
+  if (sortState.key === "__default") {
+    if (sortState.asc) rows.reverse();
+    return rows;
+  }
+  const key = sortState.key;
+  rows.sort((a, b) => {
+    const va = sortValue(a, key);
+    const vb = sortValue(b, key);
+    const cmp = typeof va === "string" ? va.localeCompare(vb) : va - vb;
+    return sortState.asc ? cmp : -cmp;
+  });
+  return rows;
+}
+
+function headerCells() {
+  return [
+    { key: "rank", label: "Rank" },
+    { key: "name", label: "Player" },
+    { key: "age", label: "Age" },
+    { key: "form", label: "Form" },
+    { key: "exp", label: "Exp" },
+    { key: "spec", label: "Spec" },
+    ...lastResult.labels.map(label => ({ key: label, label })),
+    { key: "avg", label: "Avg" },
+    { key: "__default", label: "Best" },
+  ];
+}
+
+function render() {
   const position = el("position").selectedOptions[0].textContent;
   el("results-title").textContent =
-    position + " — " + result.rows.length + " players ranked";
-  const head = ["Rank", "Player", "Age", "Form", "Exp",
-                ...result.labels, "Best"];
-  const thead = "<thead><tr>" + head.map(h => "<th>" + h + "</th>").join("") + "</tr></thead>";
-  const body = result.rows.map(row => {
+    position + " — " + lastResult.rows.length + " players ranked";
+  const thead = "<thead><tr>" + headerCells().map(h => {
+    const arrow = sortState.key === h.key
+      ? " <span class='arrow'>" + (sortState.asc ? "▲" : "▼") + "</span>" : "";
+    return "<th data-key=\"" + escapeHtml(h.key) + "\">" + escapeHtml(h.label) + arrow + "</th>";
+  }).join("") + "</tr></thead>";
+  const body = sortedRows().map(row => {
     const cells = [
       "<td class='num'>" + row.rank + "</td>",
       "<td>" + escapeHtml(row.name) + "</td>",
       "<td class='num'>" + row.age + "</td>",
       "<td class='num'>" + row.form + "</td>",
       "<td class='num'>" + row.exp + "</td>",
-      ...result.labels.map(label => {
+      "<td>" + escapeHtml(row.spec) + "</td>",
+      ...lastResult.labels.map(label => {
         const cls = label === row.best ? "num best-val" : "num";
         return "<td class='" + cls + "'>" + row.totals[label].toFixed(3) + "</td>";
       }),
+      "<td class='num'>" + row.avg.toFixed(3) + "</td>",
       "<td>" + escapeHtml(row.best) + "</td>",
     ];
     return "<tr>" + cells.join("") + "</tr>";
   }).join("");
   el("results").innerHTML = thead + "<tbody>" + body + "</tbody>";
-  el("warnings").textContent = result.warnings.length
-    ? "Skipped rows: " + result.warnings.join("; ")
+  for (const th of el("results").querySelectorAll("th")) {
+    th.addEventListener("click", () => {
+      const key = th.dataset.key;
+      if (sortState.key === key) {
+        sortState.asc = !sortState.asc;
+      } else {
+        sortState = { key, asc: false };
+      }
+      render();
+    });
+  }
+  el("warnings").textContent = lastResult.warnings.length
+    ? "Skipped rows: " + lastResult.warnings.join("; ")
     : "";
   el("results-card").hidden = false;
 }
 
 el("download").addEventListener("click", () => {
   if (!lastResult) return;
-  const head = ["Rank", "Player", "Age", "Form", "Exp", ...lastResult.labels, "Best"];
+  const head = ["Rank", "Player", "Age", "Form", "Exp", "Spec",
+                ...lastResult.labels, "Avg", "Best"];
   const lines = [head.join(",")];
-  for (const row of lastResult.rows) {
+  for (const row of sortedRows()) {
     lines.push([
-      row.rank, csvField(row.name), row.age, row.form, row.exp,
+      row.rank, csvField(row.name), row.age, row.form, row.exp, csvField(row.spec),
       ...lastResult.labels.map(label => row.totals[label].toFixed(4)),
-      csvField(row.best),
+      row.avg.toFixed(4), csvField(row.best),
     ].join(","));
   }
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
